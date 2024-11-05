@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Route Planner</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <style>
+        /* General Styling */
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f4f8;
+        }
+        #header {
+            background-color: #3498db;
+            color: white;
+            text-align: center;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        #container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        #sidebar {
+            width: 300px;
+            padding: 1rem;
+            background-color: white;
+            overflow-y: auto;
+            box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+        }
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+        input, button {
+            width: 100%;
+            padding: 0.75rem;
+            margin-bottom: 0.75rem;
+            font-size: 14px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        /* Sidebar Styling */
+        #directions {
+            margin-top: 1rem;
+            background-color: #f9fafb;
+            border-radius: 4px;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        /* Stop Item Styling */
+        .stop-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem;
+            margin-bottom: 0.5rem;
+            background-color: #eef1f5;
+            border-radius: 4px;
+            animation: fadeIn 0.3s ease-out;
+        }
+        /* Remove Button Styling */
+        .remove-stop {
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            padding: 0.25rem 0.5rem;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 12px;
+            transition: background-color 0.3s ease;
+        }
+        .remove-stop:hover {
+            background-color: #c0392b;
+        }
+        /* Animation */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>Delivery Route Planner</h1>
+    </div>
+    <div id="container">
+        <div id="sidebar">
+            <input type="text" id="stopInput" placeholder="Enter stop address">
+            <button onclick="addStop()">Add Stop</button>
+            <div id="stopList"></div>
+            <button onclick="optimizeRoute()">Optimize Route</button>
+            <div id="directions"></div>
+        </div>
+        <div id="map"></div>
+    </div>
+
+    <script>
+        let map;
+        let markers = [];
+        let polyline;
+        let stops = [];
+        const apiKey = '5b3ce3597851110001cf6248f0c3d0a8c9c24a5c8a9e0c1e1c9c5c9c';
+
+        function initMap() {
+            map = L.map('map').setView([40.7128, -74.0060], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+        }
+
+        async function addStop() {
+            const stopInput = document.getElementById('stopInput');
+            const address = stopInput.value.trim();
+            if (address) {
+                try {
+                    const coordinates = await geocode(address);
+                    stops.push({ address, coordinates });
+                    stopInput.value = '';
+                    updateStopList();
+                    addMarker(coordinates, address);
+                } catch (error) {
+                    alert('Could not find the address. Please try again.');
+                }
+            }
+        }
+
+        function removeStop(index) {
+            stops.splice(index, 1);
+            updateStopList();
+            updateMap();
+        }
+
+        function updateStopList() {
+            const stopList = document.getElementById('stopList');
+            stopList.innerHTML = '';
+            stops.forEach((stop, index) => {
+                const stopItem = document.createElement('div');
+                stopItem.className = 'stop-item';
+                stopItem.innerHTML = `
+                    <span>${index + 1}. ${stop.address}</span>
+                    <button class="remove-stop" onclick="removeStop(${index})">Remove</button>
+                `;
+                stopList.appendChild(stopItem);
+            });
+        }
+
+        async function optimizeRoute() {
+            if (stops.length < 2) {
+                alert('Please add at least two stops to optimize the route.');
+                return;
+            }
+
+            const coordinates = stops.map(stop => stop.coordinates.join(','));
+            const url = `https://api.openrouteservice.org/v2/directions/driving-car?api_key=${apiKey}&start=${coordinates[0]}&end=${coordinates[coordinates.length - 1]}&waypoints=${coordinates.slice(1, -1).join('|')}`;
+
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                displayRoute(data);
+            } catch (error) {
+                alert('Could not calculate an optimized route. Please try again.');
+            }
+        }
+
+        function displayRoute(routeData) {
+            const directionsDiv = document.getElementById('directions');
+            directionsDiv.innerHTML = '<h3>Optimized Route Directions:</h3>';
+
+            const route = routeData.features[0];
+            const totalDistance = route.properties.summary.distance / 1000; // km
+            const totalDuration = route.properties.summary.duration / 60; // minutes
+
+            let routeCoordinates = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+            routeCoordinates.forEach((coord, index) => {
+                directionsDiv.innerHTML += `<p><strong>Stop ${index + 1}:</strong> ${stops[index].address}</p>`;
+            });
+
+            directionsDiv.innerHTML += `
+                <p><strong>Total Distance:</strong> ${totalDistance.toFixed(2)} km</p>
+                <p><strong>Total Duration:</strong> ${Math.round(totalDuration)} minutes</p>
+            `;
+
+            updateMap(routeCoordinates);
+        }
+
+        function updateMap(routeCoordinates = null) {
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            if (polyline) map.removeLayer(polyline);
+
+            stops.forEach((stop, index) => {
+                addMarker(stop.coordinates, `Stop ${index + 1}`);
+            });
+
+            if (routeCoordinates) {
+                polyline = L.polyline(routeCoordinates, {color: 'blue'}).addTo(map);
+                map.fitBounds(polyline.getBounds());
+            } else if (markers.length > 0) {
+                map.fitBounds(L.featureGroup(markers).getBounds());
+            }
+        }
+
+        function addMarker(coordinates, label) {
+            const marker = L.marker(coordinates).addTo(map);
+            marker.bindPopup(label);
+            markers.push(marker);
+        }
+
+        async function geocode(address) {
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            if (data.length === 0) throw new Error('Address not found');
+            return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+        }
+
+        initMap();
+    </script>
+</body>
+</html>
